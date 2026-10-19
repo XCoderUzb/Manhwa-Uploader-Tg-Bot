@@ -2,7 +2,8 @@ import http from "node:http";
 import { createChapter, findManhwa, listChapters } from "./base44.js";
 import { config } from "./config.js";
 import { chapterRows, escapeHtml, parseCode, startText } from "./keyboards.js";
-import { clearSession, getSession, setSession } from "./sessions.js";
+import { downloadFromUrl, fileKind } from "./remote.js";
+import { allSessions, clearSession, getSession, setSession } from "./sessions.js";
 import { processImage, processPdf } from "./uploader.js";
 import {
   answerCallback,
@@ -146,6 +147,7 @@ async function handleNumber(chatId, text, session) {
       "",
       "📄 <b>PDF</b> — o'zi rasmlarga ajratadi va bo'laklarga bo'lib yuklaydi",
       "🖼 yoki rasmlar (📎 → Fayl qilib yuborsangiz sifat saqlanadi)",
+      "🔗 20 MB dan katta bo'lsa — Google Drive / Dropbox havolasini yuboring",
       "",
       "Bir nechta PDF/rasm yuborsangiz, ular yuborilgan tartibda birlashadi. Tugagach «✅ Saytga saqlash» ni bosing.",
     ].join("\n"),
@@ -154,10 +156,17 @@ async function handleNumber(chatId, text, session) {
   setSession(chatId, { ...session, step: "pages", number, pages: [] });
 }
 
-async function downloadFile(fileId) {
+async function downloadFile(fileId, fileSize) {
+  const limit = 20 * 1024 * 1024;
+  if (fileSize && fileSize > limit) {
+    throw new Error(
+      `Fayl ${(fileSize / 1e6).toFixed(1)} MB. Telegram botlarga faqat 20 MB gacha fayl yuklab olishga ruxsat beradi (50 MB — bu botning yuborish limiti). ` +
+        "Yechim: faylni Google Drive / Dropbox'ga yuklab, havolasini shu yerga yuboring, yoki PDF'ni kichik qismlarga bo'lib yuboring."
+    );
+  }
   const fileUrl = await getFileUrl(fileId).catch((error) => {
     if (/too big/i.test(error.message)) {
-      throw new Error("Fayl 20 MB dan katta — Telegram bot orqali bunday faylni yuklab bo'lmaydi. PDF'ni bir necha qismga bo'lib yuboring.");
+      throw new Error("Fayl 20 MB dan katta. Havola (Drive/Dropbox) yuboring yoki kichik qismlarga bo'ling.");
     }
     throw error;
   });
@@ -174,57 +183,81 @@ function appendPages(chatId, added) {
   return pages;
 }
 
-async function handleMedia(message, session) {
-  const chatId = message.chat.id;
-  const photo = message.photo?.[message.photo.length - 1];
-  const document = message.document;
-  const isPdf =
-    document && (document.mime_type === "application/pdf" || /\.pdf$/i.test(document.file_name || ""));
-  const isImage = photo || (document && document.mime_type?.startsWith("image/"));
+// Yuklab olingan faylni (PDF yoki rasm) ishlaydi va bobga qo'shadi
+async function ingest(chatId, buffer, label, fromTelegramPhoto = false) {
+  const session = getSession(chatId);
+  if (!session) return;
+  const kind = fileKind(buffer);
+  const startIndex = session.pages?.length || 0;
 
-  if (!isPdf && !isImage) {
-    await sendMessage(chatId, "Faqat PDF yoki rasm yuboring.");
+  if (buffer.length > config.maxFileMb * 1024 * 1024) {
+    throw new Error(`Fayl ${config.maxFileMb} MB dan katta.`);
+  }
+
+  if (kind === "pdf") {
+    const status = await sendMessage(chatId, `📄 ${escapeHtml(label)} ishlanmoqda...`);
+    const { pages, totalPages } = await processPdf(buffer, startIndex, async ({ page, totalPages: total, pieces }) => {
+      if (page === total || page % 5 === 0) {
+        await editMessage(chatId, status.message_id, `⏳ PDF: ${page}/${total} sahifa ishlandi (${pieces} bo'lak)...`);
+      }
+    });
+    const all = appendPages(chatId, pages);
+    if (!all) return;
+    await editMessage(chatId, status.message_id, `✅ PDF tayyor: ${totalPages} sahifa → ${pages.length} bo'lak.`);
+    await sendMessage(
+      chatId,
+      `Bob ${session.number} da hozircha jami <b>${all.length}</b> bo'lak. Yana fayl yuborishingiz yoki saqlashingiz mumkin:`,
+      saveKeyboard(session.manhwaId, session.number)
+    );
     return;
   }
 
-  const startIndex = session.pages?.length || 0;
+  if (kind === "image") {
+    const uploaded = await processImage(buffer, `p${startIndex + 1}`, { autoRotate: fromTelegramPhoto });
+    const all = appendPages(chatId, uploaded);
+    if (!all) return;
+    // Albom yuborilganda har bir rasmga javob bermaslik uchun har 5 bo'lakda bir xabar beramiz
+    if (Math.floor(all.length / 5) > Math.floor(startIndex / 5)) {
+      await sendMessage(chatId, `Qabul qilindi: <b>${all.length}</b> bo'lak. Tugagach saqlang:`, saveKeyboard(session.manhwaId, session.number));
+    }
+    return;
+  }
+
+  throw new Error("Bu fayl PDF yoki rasm emas.");
+}
+
+async function handleMedia(message, session) {
+  const chatId = message.chat.id;
+  const text = (message.text || "").trim();
+  const photo = message.photo?.[message.photo.length - 1];
+  const document = message.document;
 
   try {
-    if (isPdf) {
-      const status = await sendMessage(chatId, `📄 ${escapeHtml(document.file_name || "PDF")} qabul qilindi, yuklab olinmoqda...`);
-      const buffer = await downloadFile(document.file_id);
-
-      const { pages, totalPages } = await processPdf(buffer, startIndex, async ({ page, totalPages: total, pieces }) => {
-        if (page === total || page % 3 === 0) {
-          await editMessage(chatId, status.message_id, `⏳ PDF: ${page}/${total} sahifa ishlandi (${pieces} bo'lak)...`);
-        }
-      });
-
-      const all = appendPages(chatId, pages);
-      if (!all) return;
-      await editMessage(chatId, status.message_id, `✅ PDF tayyor: ${totalPages} sahifa → ${pages.length} bo'lak.`);
-      await sendMessage(
-        chatId,
-        `Hozircha bob ${session.number} da jami <b>${all.length}</b> bo'lak. Yana fayl yuborishingiz yoki saqlashingiz mumkin:`,
-        saveKeyboard(session.manhwaId, session.number)
-      );
+    // Havola (Drive, Dropbox yoki to'g'ridan-to'g'ri fayl) — katta fayllar uchun
+    const link = text.match(/https?:\/\/\S+/i);
+    if (link) {
+      const status = await sendMessage(chatId, "🔗 Havoladan yuklab olinmoqda...");
+      const buffer = await downloadFromUrl(link[0]);
+      await editMessage(chatId, status.message_id, `🔗 Yuklab olindi (${(buffer.length / 1e6).toFixed(1)} MB).`);
+      await ingest(chatId, buffer, "Havoladagi fayl");
       return;
     }
 
-    const fileId = photo?.file_id || document.file_id;
-    const buffer = await downloadFile(fileId);
-    const uploaded = await processImage(buffer, `p${startIndex + 1}`);
-    const all = appendPages(chatId, uploaded);
-    if (!all) return;
-
-    // Albom (ko'p rasm) yuborilganda har bir rasmga javob bermaslik uchun har 5 bo'lakda bir xabar beramiz
-    if (Math.floor(all.length / 5) > Math.floor(startIndex / 5)) {
-      await sendMessage(
-        chatId,
-        `Qabul qilindi: <b>${all.length}</b> bo'lak. Tugagach saqlang:`,
-        saveKeyboard(session.manhwaId, session.number)
-      );
+    if (!photo && !document) {
+      await sendMessage(chatId, "PDF yoki rasm yuboring (katta fayl bo'lsa — havolasini yuboring).");
+      return;
     }
+
+    const isPdf = document && (document.mime_type === "application/pdf" || /\.pdf$/i.test(document.file_name || ""));
+    const isImage = photo || document?.mime_type?.startsWith("image/");
+    if (!isPdf && !isImage) {
+      await sendMessage(chatId, "Faqat PDF yoki rasm yuboring.");
+      return;
+    }
+
+    const target = photo || document;
+    const buffer = await downloadFile(target.file_id, target.file_size);
+    await ingest(chatId, buffer, document?.file_name || "PDF", Boolean(photo));
   } catch (error) {
     console.error("media xatosi:", error.message);
     await sendMessage(chatId, `❌ Xatolik: ${escapeHtml(error.message)}`);
@@ -324,6 +357,34 @@ async function handleUpdate(update) {
   await showChapters(chatId, parseCode(text));
 }
 
+// Har bir chat uchun yangilanishlar ketma-ket (tartib bilan) ishlanadi, lekin uzoq PDF boshqa chatlarni to'xtatmaydi
+const queues = new Map();
+function enqueue(update) {
+  const key = String(
+    update.message?.chat?.id ?? update.callback_query?.message?.chat?.id ?? update.callback_query?.from?.id ?? "x"
+  );
+  const previous = queues.get(key) || Promise.resolve();
+  const next = previous.then(() => handleUpdate(update)).catch((error) => console.error("update xatosi:", error.message));
+  queues.set(key, next);
+  next.then(() => {
+    if (queues.get(key) === next) queues.delete(key);
+  });
+}
+
+process.on("unhandledRejection", (error) => console.error("unhandledRejection:", error?.message || error));
+process.on("uncaughtException", (error) => console.error("uncaughtException:", error?.message || error));
+
+async function notifyRestart() {
+  for (const [chatId, session] of allSessions()) {
+    if (session?.step !== "pages") continue;
+    await sendMessage(
+      chatId,
+      `ℹ️ Bot qayta ishga tushdi. Bob ${session.number} uchun ${session.pages?.length || 0} bo'lak saqlangan. Oxirgi yuborgan faylingiz yuklanmagan bo'lishi mumkin — uni qaytadan yuboring yoki saqlang.`,
+      saveKeyboard(session.manhwaId, session.number)
+    ).catch(() => null);
+  }
+}
+
 function startHealthServer() {
   const port = Number(process.env.PORT || 3000);
   http
@@ -342,6 +403,7 @@ async function main() {
   await call("deleteWebhook", { drop_pending_updates: false });
   console.log(`Bot ishga tushdi: @${me.username}`);
   startHealthServer();
+  await notifyRestart();
 
   for (;;) {
     try {
@@ -351,8 +413,8 @@ async function main() {
         allowed_updates: ["message", "callback_query"],
       });
       for (const update of updates) {
-        offset = update.update_id + 1;
-        await handleUpdate(update).catch((error) => console.error("update xatosi:", error.message));
+        offset = update.update_id + 1; // darhol tasdiqlanadi — bot qayta ishga tushsa, xabar qayta kelmaydi
+        enqueue(update);
       }
     } catch (error) {
       console.error("getUpdates xatosi:", error.message);

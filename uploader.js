@@ -24,8 +24,8 @@ async function uploadParts(parts, namePrefix) {
  * Bitta rasmni (buffer) bo'laklarga bo'lib yuklaydi.
  * Qaytaradi: [{url, w, h}]
  */
-export async function processImage(buffer, namePrefix) {
-  const parts = await sliceImage(buffer);
+export async function processImage(buffer, namePrefix, options = {}) {
+  const parts = await sliceImage(buffer, options);
   return uploadParts(parts, namePrefix);
 }
 

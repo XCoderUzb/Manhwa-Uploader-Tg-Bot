@@ -23,6 +23,8 @@ export const config = {
   // PDF sahifasini rasm qilib chizishda kenglik (px) — faqat rasmni ajratib bo'lmagan sahifalar uchun
   renderWidth: number(process.env.RENDER_WIDTH, 1400),
   jpegQuality: number(process.env.JPEG_QUALITY, 90),
+  // Havola orqali yoki Telegramdan qabul qilinadigan eng katta fayl hajmi (MB)
+  maxFileMb: number(process.env.MAX_FILE_MB, 80),
   // Cloudinary'ga bir vaqtda nechta rasm yuklanadi
   uploadConcurrency: Math.max(1, number(process.env.UPLOAD_CONCURRENCY, 3)),
 };

@@ -33,9 +33,15 @@ Oddiy foydalanuvchilar uchun eski rejim saqlangan: havola yuboradi → bob raqam
 | `ADMIN_IDS` | Sizning chat ID (botga `/start` yozsangiz ko'rsatadi) |
 | `SLICE_HEIGHT` | `1500` (ixtiyoriy) |
 
-## Muhim cheklovlar
+## Fayl hajmi (muhim)
 
-- Telegram bot orqali **20 MB** gacha fayl yuklab olinadi. PDF kattaroq bo'lsa, uni bir necha qismga bo'lib yuboring (ular birlashib ketadi).
-- PDF ishlanayotganda bot boshqa xabarlarga javob bermay turadi (katta PDF uchun 1–2 daqiqa).
-- Jarayon xotirada saqlanadi: servis qayta ishga tushsa, yarim qolgan yuklashni boshidan boshlash kerak.
+- Telegram **botlarga 20 MB gacha** fayl yuklab olishga ruxsat beradi. «50 MB» — bu botning *yuborish* limiti, yuklab olish emas. Siz katta fayl yuborsangiz ham, bot uni ololmaydi.
+- **Yechim:** faylni Google Drive yoki Dropbox'ga yuklang («Havolasi bor hamma ko'ra oladi») va havolani shu yerga (fayl o'rniga) yuboring. Bot o'zi yuklab oladi (`MAX_FILE_MB`, standart 80 MB gacha).
+- Yoki PDF'ni 2–3 ta kichik PDF'ga bo'lib ketma-ket yuboring — ular tartib bilan birlashadi.
+
+## Boshqa eslatmalar
+
+- Bot xotirani tejaydi: PDF ichidagi JPEG rasmlar dekodlanmasdan olinadi. Render'ning bepul tarifi (512 MB) uchun mo'ljallangan.
+- Bot qayta ishga tushsa, yarim qolgan bob (raqami va yuklangan bo'laklari) saqlanib qoladi va bot sizga xabar beradi; oxirgi faylni qaytadan yuborasiz.
 - Bob raqami saytda allaqachon bo'lsa, bot uni qabul qilmaydi (ikki marta qo'shilib ketmasligi uchun).
+- Bir chat ichida xabarlar tartib bilan ishlanadi: PDF ishlanayotganda yuborgan tugmangiz navbatda kutadi.
