@@ -1,0 +1,17 @@
+{
+  "name": "animanxwa-telegram-bot",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.16"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.96",
+    "pdfjs-dist": "^5.4.0",
+    "sharp": "^0.34.0"
+  }
+}
